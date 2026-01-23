@@ -65,6 +65,11 @@ class State:
         self.joint_qd: wp.array | None = None
         """Generalized joint velocity coordinates, shape (joint_dof_count,), dtype float."""
 
+        # Stable Fluids
+        self.fluid_density: wp.array | None = None   # 标量场 (N, N), float32
+        self.fluid_velocity: wp.array | None = None  # 矢量场 (N, N), vec2
+        self.fluid_pressure: wp.array | None = None  # 标量场 (N, N), float32 (用于热启动压力求解)
+
     def clear_forces(self) -> None:
         """
         Clear all force arrays (for particles and bodies) in the state object.

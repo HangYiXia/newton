@@ -647,6 +647,10 @@ class ModelBuilder:
         # Custom attributes (user-defined per-frequency arrays)
         self.custom_attributes: dict[str, ModelBuilder.CustomAttribute] = {}
 
+        # Stable Fluids
+        self.fluid_res = 0
+        self.fluid_cell_size = 0.0
+
     def add_custom_attribute(self, attribute: CustomAttribute) -> None:
         """
         Define a custom per-entity attribute to be added to the Model.
@@ -6239,36 +6243,37 @@ class ModelBuilder:
             )
 
             # Add custom attributes onto the model (with lazy evaluation)
-            # Early return if no custom attributes exist to avoid overhead
-            if not self.custom_attributes:
-                return m
-
             # Process custom attributes
-            for _full_key, custom_attr in self.custom_attributes.items():
-                frequency = custom_attr.frequency
+            if self.custom_attributes:
+                for _full_key, custom_attr in self.custom_attributes.items():
+                    frequency = custom_attr.frequency
 
-                # determine count by frequency
-                if frequency == ModelAttributeFrequency.ONCE:
-                    count = 1
-                elif frequency == ModelAttributeFrequency.BODY:
-                    count = m.body_count
-                elif frequency == ModelAttributeFrequency.SHAPE:
-                    count = m.shape_count
-                elif frequency == ModelAttributeFrequency.JOINT:
-                    count = m.joint_count
-                elif frequency == ModelAttributeFrequency.JOINT_DOF:
-                    count = m.joint_dof_count
-                elif frequency == ModelAttributeFrequency.JOINT_COORD:
-                    count = m.joint_coord_count
-                elif frequency == ModelAttributeFrequency.ARTICULATION:
-                    count = m.articulation_count
-                elif frequency == ModelAttributeFrequency.EQUALITY_CONSTRAINT:
-                    count = m.equality_constraint_count
-                else:
-                    continue
+                    # determine count by frequency
+                    if frequency == ModelAttributeFrequency.ONCE:
+                        count = 1
+                    elif frequency == ModelAttributeFrequency.BODY:
+                        count = m.body_count
+                    elif frequency == ModelAttributeFrequency.SHAPE:
+                        count = m.shape_count
+                    elif frequency == ModelAttributeFrequency.JOINT:
+                        count = m.joint_count
+                    elif frequency == ModelAttributeFrequency.JOINT_DOF:
+                        count = m.joint_dof_count
+                    elif frequency == ModelAttributeFrequency.JOINT_COORD:
+                        count = m.joint_coord_count
+                    elif frequency == ModelAttributeFrequency.ARTICULATION:
+                        count = m.articulation_count
+                    elif frequency == ModelAttributeFrequency.EQUALITY_CONSTRAINT:
+                        count = m.equality_constraint_count
+                    else:
+                        continue
 
-                wp_arr = custom_attr.build_array(count, device=device, requires_grad=requires_grad)
-                m.add_attribute(custom_attr.name, wp_arr, frequency, custom_attr.assignment, custom_attr.namespace)
+                    wp_arr = custom_attr.build_array(count, device=device, requires_grad=requires_grad)
+                    m.add_attribute(custom_attr.name, wp_arr, frequency, custom_attr.assignment, custom_attr.namespace)
+
+            # Stable Fluids
+            m.fluid_res = self.fluid_res
+            m.fluid_cell_size = self.fluid_cell_size
 
             return m
 
@@ -6375,3 +6380,15 @@ class ModelBuilder:
 
         model.shape_contact_pairs = wp.array(np.array(contact_pairs), dtype=wp.vec2i, device=model.device)
         model.shape_contact_pair_count = len(contact_pairs)
+
+
+    # Stable Fluids
+    def add_fluid_grid(self, res: int, cell_size: float = 1.0):
+        """
+        Configures a grid-based fluid simulation.
+        Args:
+            res: Grid resolution (N x N).
+            cell_size: Physical size of each grid cell.
+        """
+        self.fluid_res = res
+        self.fluid_cell_size = cell_size

@@ -529,6 +529,10 @@ class Model:
         self.attribute_frequency["shape_scale"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_filter"] = ModelAttributeFrequency.SHAPE
 
+        # Stable Fluids
+        self.fluid_res: int = 0
+        self.fluid_cell_size: float = 0.0
+
     def state(self, requires_grad: bool | None = None) -> State:
         """
         Create and return a new :class:`State` object for this model.
@@ -566,6 +570,12 @@ class Model:
         # attach custom attributes with assignment==STATE
         self._add_custom_attributes(s, ModelAttributeAssignment.STATE, requires_grad=requires_grad)
 
+        # Stable Fluids
+        if self.fluid_res > 0:
+            shape = (self.fluid_res, self.fluid_res)
+            s.fluid_density = wp.zeros(shape, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+            s.fluid_velocity = wp.zeros(shape, dtype=wp.vec2, device=self.device, requires_grad=requires_grad)
+            s.fluid_pressure = wp.zeros(shape, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
         return s
 
     def control(self, requires_grad: bool | None = None, clone_variables: bool = True) -> Control:
@@ -819,3 +829,13 @@ class Model:
         if frequency is None:
             raise AttributeError(f"Attribute frequency of '{name}' is not known")
         return frequency
+
+    def add_fluid_grid(self, res: int, cell_size: float = 1.0):
+        """
+        Configures a grid-based fluid simulation.
+        Args:
+            res: Grid resolution (N x N).
+            cell_size: Physical size of each grid cell.
+        """
+        self.fluid_res = res
+        self.fluid_cell_size = cell_size
