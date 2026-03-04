@@ -28,6 +28,15 @@ class SolverStableFluids:
         if self.model.grid_count > 0:
             self.div_buffer = wp.zeros(self.model.grid_cell_count, dtype=wp.float32, device=self.device)
             self.p_tmp_buffer = wp.zeros(self.model.grid_cell_count, dtype=wp.float32, device=self.device)
+            # ===== 新增：预先提取所需的静态数据到 CPU，防止在 step 中触发 D2H 拷贝 =====
+            self.grid_dim_cpu = self.model.grid_dim.numpy()
+            self.grid_dx_cpu = self.model.grid_dx.numpy()
+            self.grid_cell_start_cpu = self.model.grid_cell_start.numpy()
+            self.grid_world_cpu = self.model.grid_world.numpy()
+            self.gravity_cpu = self.model.gravity.numpy()
+            if self.model.particle_count > 0:
+                self.particle_world_start_cpu = self.model.particle_world_start.numpy()
+                self.grid_transform_cpu = self.model.grid_transform.numpy()
 
     def step(self, state0: State, state1: State, control: Control, contacts: Contacts, dt: float):
         """
@@ -46,17 +55,17 @@ class SolverStableFluids:
 
             # Newton 支持多网格(比如并行的 RL 环境)，这里循环遍历每个网格发起计算
             for grid_id in range(self.model.grid_count):
-                dim_i = self.model.grid_dim.numpy()[grid_id]  # 读取到 CPU 端供维度使用
+                dim_i = self.grid_dim_cpu[grid_id]  # 读取到 CPU 端供维度使用
                 dim = wp.vec3i(int(dim_i[0]), int(dim_i[1]), int(dim_i[2]))
-                dx = float(self.model.grid_dx.numpy()[grid_id])
-                offset = int(self.model.grid_cell_start.numpy()[grid_id])
+                dx = float(self.grid_dx_cpu[grid_id])
+                offset = int(self.grid_cell_start_cpu[grid_id])
                 
                 launch_dim = (int(dim[0]), int(dim[1]), int(dim[2]))
                 
                 # 读取该网格所处 world 的重力
-                world_idx = int(self.model.grid_world.numpy()[grid_id])
+                world_idx = int(self.grid_world_cpu[grid_id])
                 world_idx = max(0, world_idx) # 全局(-1)使用0号world重力
-                gravity = self.model.gravity.numpy()[world_idx]
+                gravity = self.gravity_cpu[world_idx]
                 gravity_wp = wp.vec3(gravity[0], gravity[1], gravity[2])
 
                 # -------------------------------------------------------------
@@ -122,17 +131,17 @@ class SolverStableFluids:
                 # =============================================================
                 if self.model.particle_count > 0:
                     # 获取该流体网格对应的 World Index
-                    world_idx = int(self.model.grid_world.numpy()[grid_id])
+                    world_idx = int(self.grid_world_cpu[grid_id])
                     world_idx = max(0, world_idx)
 
                     # 获取该 World 对应的粒子范围 (遵循 Newton 的 World 分组机制)
-                    p_start = int(self.model.particle_world_start.numpy()[world_idx])
-                    p_end = int(self.model.particle_world_start.numpy()[world_idx + 1])
+                    p_start = int(self.particle_world_start_cpu[world_idx])
+                    p_end = int(self.particle_world_start_cpu[world_idx + 1])
                     p_count = p_end - p_start
                     
                     if p_count > 0:
                         # 获取网格变换矩阵
-                        grid_tf = self.model.grid_transform.numpy()[grid_id]
+                        grid_tf = self.grid_transform_cpu[grid_id]
                         grid_tf_wp = wp.transform(*grid_tf)
 
                         wp.launch(
