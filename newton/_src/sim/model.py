@@ -112,6 +112,8 @@ class Model:
         """Attribute frequency follows the number of mimic constraints (see :attr:`~newton.Model.constraint_mimic_count`)."""
         WORLD = 15
         """Attribute frequency follows the number of worlds (see :attr:`~newton.Model.world_count`)."""
+        GRID = 16
+        """Attribute frequency follows the number of grids (see :attr:`~newton.Model.grid_count`)."""
 
     class AttributeNamespace:
         """
@@ -746,6 +748,34 @@ class Model:
         self.actuators: list[Actuator] = []
         """List of actuator instances for this model."""
 
+        # --- Fluid Grid Parameters ---
+        self.grid_count = 0
+        """Total number of fluid grids in the system."""
+        self.grid_cell_count = 0
+        """Total number of fluid grid cells in the system (sum of nx*ny*nz for all grids)."""
+
+        self.grid_dim = None
+        """网格分辨率 (nx, ny, nz), shape [grid_count], dtype vec3i."""
+        self.grid_dx = None
+        """网格单元边长 [m], shape [grid_count], dtype float."""
+        self.grid_transform = None
+        """网格在世界坐标系下的变换, shape [grid_count], dtype transform."""
+        self.grid_viscosity = None
+        """流体运动粘度, shape [grid_count], dtype float."""
+        
+        self.grid_cell_start = None
+        """每个网格在 1D 展平数组中的起始 cell 索引, shape [grid_count + 1], int."""
+        
+        self.grid_world = None
+        """World index for each grid, shape [grid_count], int. -1 for global."""
+        self.grid_world_start = None
+        """Start index of the first grid per world, shape [world_count + 2], int."""
+        
+        self.attribute_frequency["grid_dim"] = Model.AttributeFrequency.GRID
+        self.attribute_frequency["grid_dx"] = Model.AttributeFrequency.GRID
+        self.attribute_frequency["grid_transform"] = Model.AttributeFrequency.GRID
+
+
     def state(self, requires_grad: bool | None = None) -> State:
         """
         Create and return a new :class:`State` object for this model.
@@ -797,6 +827,14 @@ class Model:
         # attach custom attributes with assignment==STATE
         self._add_custom_attributes(s, Model.AttributeAssignment.STATE, requires_grad=requires_grad)
 
+        # fluid grids
+        if self.grid_cell_count > 0:
+            s.grid_vel = wp.zeros(self.grid_cell_count, dtype=wp.vec3, device=self.device, requires_grad=requires_grad)
+            s.grid_vel_prev = wp.zeros(self.grid_cell_count, dtype=wp.vec3, device=self.device, requires_grad=requires_grad)
+            s.grid_density = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+            s.grid_density_prev = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+            s.grid_pressure = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+        
         return s
 
     def control(self, requires_grad: bool | None = None, clone_variables: bool = True) -> Control:

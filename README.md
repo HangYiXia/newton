@@ -1,3 +1,190 @@
+# 修改说明
+
+## 架构范式
+
+1. **扁平化与批处理 (Flattening & Batching)**：不使用多维数组（如 3D 数组），而是把所有流体网格的 Cell 摊平为 1D 数组（通过 grid_cell_start 索引），以支持在同一个场景（或多个并行 World）中存在多个独立的流体网格。
+
+2. **状态分离 (Stateless Model)**：静态参数（如网格尺寸、分辨率）放在 Model 中，动态变量（如速度场、密度场）放在 State 中，Python 端通过 ModelBuilder 收集配置并构建 Warp Array。
+
+3. **World 分组 (World Grouping)**：支持并行多环境，需要加入 grid_world_start 逻辑。
+
+## 主要文件说明
+
+### `newton/_src/sim/state.py`：动态物理量
+
+因实现Stable Fluids添加了
+
+```python
+  # --- Fluid Grid State ---
+  self.grid_vel: wp.array | None = None
+  """网格单元速度场 [m/s], shape (grid_cell_count,), dtype :class:`vec3`."""
+
+  self.grid_vel_prev: wp.array | None = None
+  """上一帧的网格单元速度场 (用于平流计算双缓冲), shape (grid_cell_count,), dtype :class:`vec3`."""
+
+  self.grid_density: wp.array | None = None
+  """网格单元密度场/染料浓度 [kg/m³ 或无量纲], shape (grid_cell_count,), dtype float."""
+
+  self.grid_density_prev: wp.array | None = None
+  """上一帧的网格单元密度场, shape (grid_cell_count,), dtype float."""
+
+  self.grid_pressure: wp.array | None = None
+  """网格单元压力场 [Pa], shape (grid_cell_count,), dtype float."""
+
+  self.divergence: wp.array | None = None
+  """网格单元速度散度 [1/s], shape (grid_cell_count,), dtype float."""
+```
+
+### `newton/_src/sim/model.py`：静态参数配置
+
+因实现Stable Fluids添加了
+
+在原 class AttributeFrequency(IntEnum): 中添加了
+
+```python
+  class AttributeFrequency(IntEnum):
+      # 新加入：
+      GRID = 16
+      """Attribute frequency follows the number of grids (see :attr:`~newton.Model.grid_count`)."""
+```
+```python
+  class Model:
+      def __init__(self, device: Devicelike | None = None):
+          # 新加入：
+          # --- Fluid Grid Parameters ---
+          self.grid_count = 0
+          """Total number of fluid grids in the system."""
+          self.grid_cell_count = 0
+          """Total number of fluid grid cells in the system (sum of nx*ny*nz for all grids)."""
+
+          self.grid_dim = None
+          """网格分辨率 (nx, ny, nz), shape [grid_count], dtype vec3i."""
+          self.grid_dx = None
+          """网格单元边长 [m], shape [grid_count], dtype float."""
+          self.grid_transform = None
+          """网格在世界坐标系下的变换, shape [grid_count], dtype transform."""
+          self.grid_viscosity = None
+          """流体运动粘度, shape [grid_count], dtype float."""
+          
+          self.grid_cell_start = None
+          """每个网格在 1D 展平数组中的起始 cell 索引, shape [grid_count + 1], int."""
+          
+          self.grid_world = None
+          """World index for each grid, shape [grid_count], int. -1 for global."""
+          self.grid_world_start = None
+          """Start index of the first grid per world, shape [world_count + 2], int."""
+          
+          self.attribute_frequency["grid_dim"] = Model.AttributeFrequency.GRID
+          self.attribute_frequency["grid_dx"] = Model.AttributeFrequency.GRID
+          self.attribute_frequency["grid_transform"] = Model.AttributeFrequency.GRID
+    def state(self, requires_grad: bool | None = None) -> State:
+        # 新加入：
+        # fluid grids
+        if self.grid_cell_count > 0:
+            s.grid_vel = wp.zeros(self.grid_cell_count, dtype=wp.vec3, device=self.device, requires_grad=requires_grad)
+            s.grid_vel_prev = wp.zeros(self.grid_cell_count, dtype=wp.vec3, device=self.device, requires_grad=requires_grad)
+            s.grid_density = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+            s.grid_density_prev = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+            s.grid_pressure = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
+```
+### `newton/_src/sim/builder.py`：构建器接口
+
+因实现Stable Fluids添加了
+
+```python
+  class ModelBuilder:
+      def __init__(self):
+          # 新加入：
+          # fluid grids
+          self.grid_dim = []
+          self.grid_dx = []
+          self.grid_transform = []
+          self.grid_viscosity = []
+          self.grid_world = []
+          self.grid_cell_start = []
+          self.grid_cell_count = 0
+          self.grid_world_start = []
+      
+      # 新加入：
+      # 用于创建流体的公有 API
+      def add_fluid_grid(
+        self,
+        dim: tuple[int, int, int],
+        dx: float,
+        xform: Transform | None = None,
+        viscosity: float = 0.0,
+        custom_attributes: dict[str, Any] | None = None,
+    ) -> int:
+        """
+        Adds an Eulerian fluid grid to the model for Stable Fluids simulation.
+
+        Args:
+            dim: Grid resolution (nx, ny, nz)
+            dx: Physical size of a single grid cell
+            xform: The world transform of the grid's origin. 
+            viscosity: Kinematic viscosity of the fluid.
+            custom_attributes: Dictionary of custom attribute names to values.
+
+        Returns:
+            The index of the fluid grid in the model.
+        """
+        if xform is None:
+            xform = wp.transform()
+        else:
+            xform = wp.transform(*xform)
+            
+        grid_id = len(self.grid_dim)
+        
+        self.grid_cell_start.append(self.grid_cell_count)
+        self.grid_dim.append(wp.vec3i(dim[0], dim[1], dim[2]))
+        self.grid_dx.append(dx)
+        self.grid_transform.append(xform)
+        self.grid_viscosity.append(viscosity)
+        self.grid_world.append(self.current_world)
+        
+        # 累加 cell 的总量
+        cells = int(dim[0] * dim[1] * dim[2])
+        self.grid_cell_count += cells
+        
+        if custom_attributes:
+            self._process_custom_attributes(
+                entity_index=grid_id,
+                custom_attrs=custom_attributes,
+                expected_frequency=Model.AttributeFrequency.GRID,
+            )
+            
+        return grid_id
+        def _build_world_starts(self):
+            world_entity_start_arrays = [
+                # 新加入：
+                (self.grid_world_start, len(self.grid_dim), self.grid_world, "fluid grid"),
+            ]
+        
+        def finalize(self) -> Model:
+            with wp.ScopedDevice(device):
+                # 新加入：
+                # ---------------------
+                # fluid grids
+                m.grid_count = len(self.grid_dim)
+                m.grid_cell_count = self.grid_cell_count
+                if m.grid_count > 0:
+                    m.grid_dim = wp.array(self.grid_dim, dtype=wp.vec3i, device=device)
+                    m.grid_dx = wp.array(self.grid_dx, dtype=wp.float32, device=device)
+                    m.grid_transform = wp.array(self.grid_transform, dtype=wp.transform, device=device)
+                    m.grid_viscosity = wp.array(self.grid_viscosity, dtype=wp.float32, device=device)
+                    m.grid_world = wp.array(self.grid_world, dtype=wp.int32, device=device)
+                    m.grid_world_start = wp.array(self.grid_world_start, dtype=wp.int32, device=device)
+                    
+                    # 补齐 offset 数组的最后一个占位符
+                    grid_starts = copy.copy(self.grid_cell_start)
+                    grid_starts.append(self.grid_cell_count)
+                    m.grid_cell_start = wp.array(grid_starts, dtype=wp.int32, device=device)
+```
+
+
+
+
+
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/newton-physics/newton/main)
 [![codecov](https://codecov.io/gh/newton-physics/newton/graph/badge.svg?token=V6ZXNPAWVG)](https://codecov.io/gh/newton-physics/newton)
@@ -22,6 +209,7 @@ python -m newton.examples basic_pendulum
 ```
 
 To install from source with [uv](https://docs.astral.sh/uv/), see the [installation guide](https://newton-physics.github.io/newton/latest/guide/installation.html).
+
 
 ## Examples
 

@@ -126,6 +126,26 @@ class State:
         self.joint_qd: wp.array | None = None
         """Generalized joint velocity coordinates [m/s or rad/s, depending on joint type], shape (joint_dof_count,), dtype float."""
 
+        # --- Fluid Grid State ---
+        self.grid_vel: wp.array | None = None
+        """网格单元速度场 [m/s], shape (grid_cell_count,), dtype :class:`vec3`."""
+
+        self.grid_vel_prev: wp.array | None = None
+        """上一帧的网格单元速度场 (用于平流计算双缓冲), shape (grid_cell_count,), dtype :class:`vec3`."""
+
+        self.grid_density: wp.array | None = None
+        """网格单元密度场/染料浓度 [kg/m³ 或无量纲], shape (grid_cell_count,), dtype float."""
+
+        self.grid_density_prev: wp.array | None = None
+        """上一帧的网格单元密度场, shape (grid_cell_count,), dtype float."""
+
+        self.grid_pressure: wp.array | None = None
+        """网格单元压力场 [Pa], shape (grid_cell_count,), dtype float."""
+
+        self.divergence: wp.array | None = None
+        """网格单元速度散度 [1/s], shape (grid_cell_count,), dtype float."""
+
+
     def clear_forces(self) -> None:
         """
         Clear all force arrays (for particles and bodies) in the state object.

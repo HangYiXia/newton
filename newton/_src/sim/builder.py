@@ -1005,6 +1005,16 @@ class ModelBuilder:
         # Key is (actuator_class, scalar_params_tuple) to separate instances with different scalar params
         self.actuator_entries: dict[tuple[type, tuple], ActuatorEntry] = {}
 
+        # fluid grids
+        self.grid_dim = []
+        self.grid_dx = []
+        self.grid_transform = []
+        self.grid_viscosity = []
+        self.grid_world = []
+        self.grid_cell_start = []
+        self.grid_cell_count = 0
+        self.grid_world_start = []
+
     def add_shape_collision_filter_pair(self, shape_a: int, shape_b: int) -> None:
         """Add a collision filter pair in canonical order.
 
@@ -8548,6 +8558,7 @@ class ModelBuilder:
                 self.equality_constraint_world,
                 "equality constraint",
             ),
+            (self.grid_world_start, len(self.grid_dim), self.grid_world, "fluid grid"),
         ]
 
         def build_entity_start_array(
@@ -8791,6 +8802,23 @@ class ModelBuilder:
             m.requires_grad = requires_grad
 
             m.world_count = self.world_count
+
+            # ---------------------
+            # fluid grids
+            m.grid_count = len(self.grid_dim)
+            m.grid_cell_count = self.grid_cell_count
+            if m.grid_count > 0:
+                m.grid_dim = wp.array(self.grid_dim, dtype=wp.vec3i, device=device)
+                m.grid_dx = wp.array(self.grid_dx, dtype=wp.float32, device=device)
+                m.grid_transform = wp.array(self.grid_transform, dtype=wp.transform, device=device)
+                m.grid_viscosity = wp.array(self.grid_viscosity, dtype=wp.float32, device=device)
+                m.grid_world = wp.array(self.grid_world, dtype=wp.int32, device=device)
+                m.grid_world_start = wp.array(self.grid_world_start, dtype=wp.int32, device=device)
+                
+                # 补齐 offset 数组的最后一个占位符
+                grid_starts = copy.copy(self.grid_cell_start)
+                grid_starts.append(self.grid_cell_count)
+                m.grid_cell_start = wp.array(grid_starts, dtype=wp.int32, device=device)
 
             # ---------------------
             # particles
@@ -9694,3 +9722,51 @@ class ModelBuilder:
 
         model.shape_contact_pairs = wp.array(np.array(contact_pairs), dtype=wp.vec2i, device=model.device)
         model.shape_contact_pair_count = len(contact_pairs)
+
+    def add_fluid_grid(
+        self,
+        dim: tuple[int, int, int],
+        dx: float,
+        xform: Transform | None = None,
+        viscosity: float = 0.0,
+        custom_attributes: dict[str, Any] | None = None,
+    ) -> int:
+        """
+        Adds an Eulerian fluid grid to the model for Stable Fluids simulation.
+
+        Args:
+            dim: Grid resolution (nx, ny, nz)
+            dx: Physical size of a single grid cell
+            xform: The world transform of the grid's origin. 
+            viscosity: Kinematic viscosity of the fluid.
+            custom_attributes: Dictionary of custom attribute names to values.
+
+        Returns:
+            The index of the fluid grid in the model.
+        """
+        if xform is None:
+            xform = wp.transform()
+        else:
+            xform = wp.transform(*xform)
+            
+        grid_id = len(self.grid_dim)
+        
+        self.grid_cell_start.append(self.grid_cell_count)
+        self.grid_dim.append(wp.vec3i(dim[0], dim[1], dim[2]))
+        self.grid_dx.append(dx)
+        self.grid_transform.append(xform)
+        self.grid_viscosity.append(viscosity)
+        self.grid_world.append(self.current_world)
+        
+        # 累加 cell 的总量
+        cells = int(dim[0] * dim[1] * dim[2])
+        self.grid_cell_count += cells
+        
+        if custom_attributes:
+            self._process_custom_attributes(
+                entity_index=grid_id,
+                custom_attrs=custom_attributes,
+                expected_frequency=Model.AttributeFrequency.GRID,
+            )
+            
+        return grid_id
