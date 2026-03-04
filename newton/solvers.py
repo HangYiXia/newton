@@ -121,6 +121,7 @@ from ._src.solvers import (
     SolverVBD,
     SolverXPBD,
     style3d,
+    SolverStableFluids,
 )
 
 # solver flags
@@ -137,4 +138,5 @@ __all__ = [
     "SolverVBD",
     "SolverXPBD",
     "style3d",
+    "SolverStableFluids",
 ]

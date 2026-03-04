@@ -8,9 +8,9 @@
 
 3. **World 分组 (World Grouping)**：支持并行多环境，需要加入 grid_world_start 逻辑。
 
-## 主要文件说明
+# 数据结构
 
-### `newton/_src/sim/state.py`：动态物理量
+## `newton/_src/sim/state.py`：动态物理量
 
 因实现Stable Fluids添加了
 
@@ -35,7 +35,7 @@
   """网格单元速度散度 [1/s], shape (grid_cell_count,), dtype float."""
 ```
 
-### `newton/_src/sim/model.py`：静态参数配置
+## `newton/_src/sim/model.py`：静态参数配置
 
 因实现Stable Fluids添加了
 
@@ -87,7 +87,7 @@
             s.grid_density_prev = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
             s.grid_pressure = wp.zeros(self.grid_cell_count, dtype=wp.float32, device=self.device, requires_grad=requires_grad)
 ```
-### `newton/_src/sim/builder.py`：构建器接口
+## `newton/_src/sim/builder.py`：构建器接口
 
 因实现Stable Fluids添加了
 
@@ -180,6 +180,16 @@
                     grid_starts.append(self.grid_cell_count)
                     m.grid_cell_start = wp.array(grid_starts, dtype=wp.int32, device=device)
 ```
+# Solver实现
+以下完全是新增文件：具体说明见文件注释
+## `newton/_src/solvers/stable_fluids/__init__.py`：包的导出
+## `newton/_src/solvers/__init__.py`：包的导出
+## `newton/solvers.py`：newton.solvers 中直接导入的接口
+
+## `newton/_src/solvers/stable_fluids/solver.py`：
+在 Newton 中，物理逻辑是由 Solver 的 step() 函数推进的。我们需要在这里组织流体的 Ping-Pong 缓冲和迭代。
+
+## `newton/_src/solvers/stable_fluids/kernels.py`：Stable Fluids 的 Warp 内核实现
 
 
 
