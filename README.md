@@ -192,6 +192,21 @@
 ## `newton/_src/solvers/stable_fluids/kernels.py`：Stable Fluids 的 Warp 内核实现
 
 
+# 示例运行
+在 `newton/examples/` 下添加了 `stable_fluids`
+并在其中写了`example_stable_fluids.py`，展示了如何使用新的 API 创建一个流体网格并运行仿真。
+在`newton/examples/__init__.py`中添加了对应的导出。
+```python
+def main():
+    modules = [
+        # 新加入：
+        "stable_fluids"
+    ]
+```
+然后运行这个脚本：
+```cmd
+python -m newton.examples stable_fluids 
+```
 
 
 

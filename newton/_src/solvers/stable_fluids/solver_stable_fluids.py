@@ -10,7 +10,8 @@ from .kernels import (
     apply_forces_kernel,
     compute_divergence_kernel,
     jacobi_pressure_kernel,
-    subtract_gradient_kernel
+    subtract_gradient_kernel,
+    advect_marker_particles_kernel
 )
 
 class SolverStableFluids:
@@ -115,3 +116,39 @@ class SolverStableFluids:
                     inputs=[state1.grid_vel, state1.grid_pressure, dim, dx, offset],
                     device=self.device
                 )
+
+                # =============================================================
+                # 6. MAC 标记粒子平流 (Marker Particle Advection)
+                # =============================================================
+                if self.model.particle_count > 0:
+                    # 获取该流体网格对应的 World Index
+                    world_idx = int(self.model.grid_world.numpy()[grid_id])
+                    world_idx = max(0, world_idx)
+
+                    # 获取该 World 对应的粒子范围 (遵循 Newton 的 World 分组机制)
+                    p_start = int(self.model.particle_world_start.numpy()[world_idx])
+                    p_end = int(self.model.particle_world_start.numpy()[world_idx + 1])
+                    p_count = p_end - p_start
+                    
+                    if p_count > 0:
+                        # 获取网格变换矩阵
+                        grid_tf = self.model.grid_transform.numpy()[grid_id]
+                        grid_tf_wp = wp.transform(*grid_tf)
+
+                        wp.launch(
+                            kernel=advect_marker_particles_kernel,
+                            dim=p_count,
+                            inputs=[
+                                state0.particle_q,         # 读取上一帧粒子位置
+                                state1.particle_q,         # 写入当前帧粒子位置
+                                self.model.particle_flags,
+                                state1.grid_vel,           # 使用刚刚投影完的无散度速度场
+                                dim,
+                                dx,
+                                grid_tf_wp,
+                                offset,
+                                dt,
+                                p_start
+                            ],
+                            device=self.device
+                        )

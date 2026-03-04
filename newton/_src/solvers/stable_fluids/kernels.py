@@ -171,3 +171,56 @@ def subtract_gradient_kernel(
 
     v = vel[idx]
     vel[idx] = wp.vec3(v[0] - grad_x, v[1] - grad_y, v[2] - grad_z)
+
+
+
+# 可视化粒子平流
+@wp.kernel
+def advect_marker_particles_kernel(
+    particle_q_in: wp.array(dtype=wp.vec3),
+    particle_q_out: wp.array(dtype=wp.vec3),
+    particle_flags: wp.array(dtype=wp.int32),
+    grid_vel: wp.array(dtype=wp.vec3),
+    grid_dim: wp.vec3i,
+    grid_dx: float,
+    grid_transform: wp.transform,
+    grid_offset: int,
+    dt: float,
+    particle_offset: int  # 对应不同 World 的粒子起始索引
+):
+    # 线程 ID 对应当前 World 的局部粒子索引
+    tid = wp.tid()
+    p_idx = particle_offset + tid
+    
+    # 略过被禁用的粒子
+    if particle_flags[p_idx] == 0:
+        return
+
+    # 1. 获取世界坐标，转换到流体网格的局部坐标系
+    p_world = particle_q_in[p_idx]
+    inv_tf = wp.transform_inverse(grid_transform)
+    p_local = wp.transform_point(inv_tf, p_world)
+    
+    # 局部连续浮点网格坐标 (用于插值)
+    p_grid = p_local / grid_dx
+
+    # ==========================================
+    # RK2 (Runge-Kutta 2阶) 积分防止粒子飞出涡流
+    # ==========================================
+    # k1 (当前点速度)
+    v_local_1 = sample_field_vec3(grid_vel, p_grid, grid_dim, grid_offset)
+    
+    # 预测半步位置
+    p_local_mid = p_local + v_local_1 * (0.5 * dt)
+    p_grid_mid = p_local_mid / grid_dx
+    
+    # k2 (中点速度)
+    v_local_2 = sample_field_vec3(grid_vel, p_grid_mid, grid_dim, grid_offset)
+    
+    # 实际推进
+    p_local_new = p_local + v_local_2 * dt
+    
+    # 将更新后的局部坐标转回世界坐标
+    p_world_new = wp.transform_point(grid_transform, p_local_new)
+    
+    particle_q_out[p_idx] = p_world_new
